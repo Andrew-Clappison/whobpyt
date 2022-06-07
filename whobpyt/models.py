@@ -3,6 +3,7 @@ WhoBPyt Model Classes
 """
 
 import torch
+import contextlib
 
 class RWW_Params():
     ## EQUATIONS & BIOLOGICAL VARIABLES FROM:
@@ -66,7 +67,7 @@ class RWW_Layer(torch.nn.Module):
     # Wong KF, Wang XJ. A recurrent network mechanism of time integration in perceptual decisions. Journal of Neuroscience. 2006 Jan 25;26(4):1314-28.
     # Friston KJ, Harrison L, Penny W. Dynamic causal modelling. Neuroimage. 2003 Aug 1;19(4):1273-302.  
   
-    def __init__(self, num_regions, params, Con_Mtx, Dist_Mtx, step_size = 0.0001, useBC = False):        
+    def __init__(self, num_regions, params, Con_Mtx, Dist_Mtx, step_size = 0.1, useBC = False):        
         super(RWW_Layer, self).__init__() # To inherit parameters attribute
         
         # Initialize the RWW Model 
@@ -165,7 +166,7 @@ class RWW_Layer(torch.nn.Module):
         
         return r_I
     
-    def forward(self, init_state, sim_len, useDelays = False, useLaplacian = False, withOptVars = False, useGPU = False, debug = False):
+    def forward(self, init_state, sim_len, startGradAtStep = 0, useDelays = False, useLaplacian = False, withOptVars = False, useGPU = False, debug = False):
                 
         # Runs the RWW Model 
         #
@@ -197,97 +198,105 @@ class RWW_Layer(torch.nn.Module):
 
         num_steps = int(sim_len/self.step_size)
         for i in range(num_steps):
+        
+            if (i < startGradAtStep):
+                ctx = torch.no_grad()
+            else:
+                ctx = contextlib.nullcontext()
             
-            if((not useDelays) & (not useLaplacian)):
-                Network_S_E =  torch.matmul(self.Con_Mtx, S_E)
-
-            if(useDelays & (not useLaplacian)):
-                # WARNING: This has not been tested
-                
-                speed = (1.5 + torch.nn.functional.relu(self.mu)) * (self.step_size * 0.001)
-                self.delays_idx = (self.Dist_Mtx / speed).type(torch.int64) #TODO: What is the units of the distance matrix then? Needs to be in meters?
-
-                S_E_history_new = self.delayed_S_E # TODO: Check if this needs to be cloned to work
-                S_E_delayed_Mtx = S_E_history_new.gather(0, (self.buffer_idx - self.delays_idx)%self.buffer_len)  # delayed E #TODO: Is distance matrix symmetric, should this be transposed?
-
-                Delayed_S_E = torch.sum(torch.mul(self.Con_Mtx, S_E_delayed_Mtx), 1) # weights on delayed E
-
-                Network_S_E = Delayed_S_E
-
-            if(useLaplacian & (not useDelays)):
-                # WARNING: This has not been tested
-                
-                # NOTE: We are acutally using the NEGATIVE Laplacian
-                
-                Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
-                S_E_laplacian = torch.matmul(self.Con_Mtx + Laplacian_diagonal, S_E)
-
-                Network_S_E = S_E_laplacian 
-
-
-            if(useDelays & useLaplacian):
-                # WARNING: This has not been tested
-                
-                # NOTE: We are acutally using the NEGATIVE Laplacian
-
-                Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
-                           
-                speed = (1.5 + torch.nn.functional.relu(self.mu)) * (self.step_size * 0.001)
-                self.delays_idx = (self.Dist_Mtx / speed).type(torch.int64) #TODO: What is the units of the distance matrix then?
-                
-                S_E_history_new = self.delayed_S_E # TODO: Check if this needs to be cloned to work
-                S_E_delayed_Mtx = S_E_history_new.gather(0, (self.buffer_idx - self.delays_idx)%self.buffer_len) 
-                
-                S_E_delayed_Vector = torch.sum(torch.mul(self.Con_Mtx, S_E_delayed_Mtx), 1) # weights on delayed E
-                
-                Delayed_Laplacian_S_E = (S_E_delayed_Vector + torch.matmul(Laplacian_diagonal, S_E))
-                
-                Network_S_E = Delayed_Laplacian_S_E
-                
-
-
-            # Currents
-            I_E = self.W_E*self.I_0 + self.w_plus*self.J_NMDA*S_E + self.G*self.J_NMDA*Network_S_E - self.J*S_I + self.I_external
-            I_I = self.W_I*self.I_0 + self.J_NMDA*S_E - S_I + self.Lambda*self.G*self.J_NMDA*Network_S_E
+            with ctx:
             
-            # Firing Rates
-            # Orig
-            #r_E = (self.a_E*I_E - self.b_E) / (1 - torch.exp(-self.d_E*(self.a_E*I_E - self.b_E)))
-            #r_I = (self.a_I*I_I - self.b_I) / (1 - torch.exp(-self.d_I*(self.a_I*I_I - self.b_I)))
-            #
-            # EDIT5: Version to address torch.exp() returning nan and prevent gradient returning 0, and works with autograd
-            r_E = self.H_for_E_V3(I_E)
-            r_I = self.H_for_I_V3(I_I)
-            
-            # Average Synaptic Gating Variable
-            dS_E = - S_E/self.tau_E + (1 - S_E)*self.gamma*r_E + self.sig*v_of_T[i, :]
-            dS_I = - S_I/self.tau_I + self.gammaI*r_I + self.sig*v_of_T[i, :]
-            
-            # UPDATE VALUES
-            S_E = S_E + self.step_size*dS_E
-            S_I = S_I + self.step_size*dS_I
-            
-            # Bound the possible values of state variables (From fit.py code for numerical stability)
-            if(self.useBC):
-                S_E = torch.tanh(0.00001 + torch.nn.functional.relu(S_E - 0.00001))
-                S_I = torch.tanh(0.00001 + torch.nn.functional.relu(S_I - 0.00001))
-            
-            state_hist[i, :, 0] = S_E
-            state_hist[i, :, 1] = S_I 
+                if((not useDelays) & (not useLaplacian)):
+                    Network_S_E =  torch.matmul(self.Con_Mtx, S_E)
 
-            if useDelays:
-                self.delayed_S_E = self.delayed_S_E.clone(); self.delayed_S_E[self.buffer_idx, :] = S_E #TODO: This means that not back-propagating the network just the individual nodes
+                if(useDelays & (not useLaplacian)):
+                    # WARNING: This has not been tested
+                    
+                    speed = (1.5 + torch.nn.functional.relu(self.mu)) * (self.step_size * 0.001)
+                    self.delays_idx = (self.Dist_Mtx / speed).type(torch.int64) #TODO: What is the units of the distance matrix then? Needs to be in meters?
 
-                if (self.buffer_idx == (self.buffer_len - 1)):
-                    self.buffer_idx = 0
-                else: 
-                    self.buffer_idx = self.buffer_idx + 1
-            
-            if(withOptVars):
-                opt_hist[i, :, 0] = I_I
-                opt_hist[i, :, 1] = I_E
-                opt_hist[i, :, 2] = r_I
-                opt_hist[i, :, 3] = r_E
+                    S_E_history_new = self.delayed_S_E # TODO: Check if this needs to be cloned to work
+                    S_E_delayed_Mtx = S_E_history_new.gather(0, (self.buffer_idx - self.delays_idx)%self.buffer_len)  # delayed E #TODO: Is distance matrix symmetric, should this be transposed?
+
+                    Delayed_S_E = torch.sum(torch.mul(self.Con_Mtx, S_E_delayed_Mtx), 1) # weights on delayed E
+
+                    Network_S_E = Delayed_S_E
+
+                if(useLaplacian & (not useDelays)):
+                    # WARNING: This has not been tested
+                    
+                    # NOTE: We are acutally using the NEGATIVE Laplacian
+                    
+                    Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
+                    S_E_laplacian = torch.matmul(self.Con_Mtx + Laplacian_diagonal, S_E)
+
+                    Network_S_E = S_E_laplacian 
+
+
+                if(useDelays & useLaplacian):
+                    # WARNING: This has not been tested
+                    
+                    # NOTE: We are acutally using the NEGATIVE Laplacian
+
+                    Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
+                               
+                    speed = (1.5 + torch.nn.functional.relu(self.mu)) * (self.step_size * 0.001)
+                    self.delays_idx = (self.Dist_Mtx / speed).type(torch.int64) #TODO: What is the units of the distance matrix then?
+                    
+                    S_E_history_new = self.delayed_S_E # TODO: Check if this needs to be cloned to work
+                    S_E_delayed_Mtx = S_E_history_new.gather(0, (self.buffer_idx - self.delays_idx)%self.buffer_len) 
+                    
+                    S_E_delayed_Vector = torch.sum(torch.mul(self.Con_Mtx, S_E_delayed_Mtx), 1) # weights on delayed E
+                    
+                    Delayed_Laplacian_S_E = (S_E_delayed_Vector + torch.matmul(Laplacian_diagonal, S_E))
+                    
+                    Network_S_E = Delayed_Laplacian_S_E
+                    
+
+
+                # Currents
+                I_E = self.W_E*self.I_0 + self.w_plus*self.J_NMDA*S_E + self.G*self.J_NMDA*Network_S_E - self.J*S_I + self.I_external
+                I_I = self.W_I*self.I_0 + self.J_NMDA*S_E - S_I + self.Lambda*self.G*self.J_NMDA*Network_S_E
+                
+                # Firing Rates
+                # Orig
+                #r_E = (self.a_E*I_E - self.b_E) / (1 - torch.exp(-self.d_E*(self.a_E*I_E - self.b_E)))
+                #r_I = (self.a_I*I_I - self.b_I) / (1 - torch.exp(-self.d_I*(self.a_I*I_I - self.b_I)))
+                #
+                # EDIT5: Version to address torch.exp() returning nan and prevent gradient returning 0, and works with autograd
+                r_E = self.H_for_E_V3(I_E)
+                r_I = self.H_for_I_V3(I_I)
+                
+                # Average Synaptic Gating Variable
+                dS_E = - S_E/self.tau_E + (1 - S_E)*self.gamma*r_E + self.sig*v_of_T[i, :]
+                dS_I = - S_I/self.tau_I + self.gammaI*r_I + self.sig*v_of_T[i, :]
+                
+                # UPDATE VALUES
+                S_E = S_E + self.step_size*dS_E
+                S_I = S_I + self.step_size*dS_I
+                
+                # Bound the possible values of state variables (From fit.py code for numerical stability)
+                if(self.useBC):
+                    S_E = torch.tanh(0.00001 + torch.nn.functional.relu(S_E - 0.00001))
+                    S_I = torch.tanh(0.00001 + torch.nn.functional.relu(S_I - 0.00001))
+                
+
+                state_hist[i, :, 0] = S_E
+                state_hist[i, :, 1] = S_I
+
+                if useDelays:
+                    self.delayed_S_E = self.delayed_S_E.clone(); self.delayed_S_E[self.buffer_idx, :] = S_E #TODO: This means that not back-propagating the network just the individual nodes
+
+                    if (self.buffer_idx == (self.buffer_len - 1)):
+                        self.buffer_idx = 0
+                    else: 
+                        self.buffer_idx = self.buffer_idx + 1
+                
+                if(withOptVars):
+                    opt_hist[i, :, 0] = I_I
+                    opt_hist[i, :, 1] = I_E
+                    opt_hist[i, :, 2] = r_I
+                    opt_hist[i, :, 3] = r_E
             
         state_vals = torch.cat((torch.unsqueeze(S_E, 1), torch.unsqueeze(S_I, 1)), 1)
         
@@ -338,7 +347,7 @@ class EEG_Layer():
         
         self.LF = params.LF
         
-    def forward(self, step_size, sim_len, node_history, useGPU = False):
+    def forward(self, step_size, sim_len, node_history, startGradAtStep = 0, useGPU = False):
         
         # Runs the EEG Model
         #
@@ -359,7 +368,14 @@ class EEG_Layer():
         
         num_steps = int(sim_len/step_size)
         for i in range(num_steps):
-            layer_hist[i, :, 0] = torch.matmul(self.LF, node_history[i, :, 0] - node_history[i, :, 1])
+        
+            if (i < startGradAtStep):
+                ctx = torch.no_grad()
+            else:
+                ctx = contextlib.nullcontext()
+            
+            with ctx:
+                layer_hist[i, :, 0] = torch.matmul(self.LF, node_history[i, :, 0] - node_history[i, :, 1])
             
         return layer_hist
 
@@ -431,7 +447,7 @@ class BOLD_Layer(torch.nn.Module):
         self.useBC = useBC   #useBC: is if we want the model to use boundary conditions
         
         
-    def forward(self, init_state, step_size, sim_len, node_history, useGPU = False):
+    def forward(self, init_state, step_size, sim_len, node_history, startGradAtStep = 0, useGPU = False):
         
         # Runs the BOLD Model
         #
@@ -462,36 +478,43 @@ class BOLD_Layer(torch.nn.Module):
         num_steps = int(sim_len/step_size)
         for i in range(num_steps):
             
-            z = node_history[i,:] 
+            if (i < startGradAtStep):
+                ctx = torch.no_grad()
+            else:
+                ctx = contextlib.nullcontext()
             
-            #BOLD State Variables
-            dx = z - self.kappa*x - self.gammaB*(f - 1)
-            df = x
-            dv = (f - v**(1/self.alpha))/self.tao
-            dq = ((f/self.ro) * (1 - (1 - self.ro)**(1/f)) - q*v**(1/self.alpha - 1))/self.tao
+            with ctx:
             
-            # UPDATE VALUES
-            # NOTE: bold equations are in sec so step_size will be divide by 1000
-            x = x + step_size/1000*dx
-            f = f + step_size/1000*df
-            v = v + step_size/1000*dv
-            q = q + step_size/1000*dq
-            
-            # Bound the possible values of state variables (From fit.py code for numerical stability)
-            if(self.useBC):
-                x = torch.tanh(x)
-                f = (1 + torch.tanh(f - 1))
-                v = (1 + torch.tanh(v - 1))
-                q = (1 + torch.tanh(q - 1))
-            
-            #BOLD Calculation
-            BOLD = self.V_0*(self.k_1*(1 - q) + self.k_2*(1 - q/v) + self.k_3*(1 - v))
-            
-            layer_hist[i, :, 0] = x
-            layer_hist[i, :, 1] = f
-            layer_hist[i, :, 2] = v
-            layer_hist[i, :, 3] = q
-            layer_hist[i, :, 4] = BOLD
+                z = node_history[i,:] 
+                
+                #BOLD State Variables
+                dx = z - self.kappa*x - self.gammaB*(f - 1)
+                df = x
+                dv = (f - v**(1/self.alpha))/self.tao
+                dq = ((f/self.ro) * (1 - (1 - self.ro)**(1/f)) - q*v**(1/self.alpha - 1))/self.tao
+                
+                # UPDATE VALUES
+                # NOTE: bold equations are in sec so step_size will be divide by 1000
+                x = x + step_size/1000*dx
+                f = f + step_size/1000*df
+                v = v + step_size/1000*dv
+                q = q + step_size/1000*dq
+                
+                # Bound the possible values of state variables (From fit.py code for numerical stability)
+                if(self.useBC):
+                    x = torch.tanh(x)
+                    f = (1 + torch.tanh(f - 1))
+                    v = (1 + torch.tanh(v - 1))
+                    q = (1 + torch.tanh(q - 1))
+                
+                #BOLD Calculation
+                BOLD = self.V_0*(self.k_1*(1 - q) + self.k_2*(1 - q/v) + self.k_3*(1 - v))
+                
+                layer_hist[i, :, 0] = x
+                layer_hist[i, :, 1] = f
+                layer_hist[i, :, 2] = v
+                layer_hist[i, :, 3] = q
+                layer_hist[i, :, 4] = BOLD
             
         state_vals = torch.cat((torch.unsqueeze(x, 1), torch.unsqueeze(f, 1), torch.unsqueeze(v, 1), torch.unsqueeze(q, 1)),1)
         
