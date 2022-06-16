@@ -166,7 +166,7 @@ class RWW_Layer(torch.nn.Module):
         
         return r_I
     
-    def forward(self, init_state, sim_len, useDelays = False, useLaplacian = False, withOptVars = False, useGPU = False, debug = False):
+    def forward(self, init_state, sim_len, v_of_T, useDelays = False, useLaplacian = False, withOptVars = False, useGPU = False, debug = False):
                 
         # Runs the RWW Model 
         #
@@ -187,7 +187,7 @@ class RWW_Layer(torch.nn.Module):
             if(withOptVars):
                 opt_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 4).cuda()
         else:
-            v_of_T = torch.normal(0,1,size = (len(torch.arange(0, sim_len, self.step_size)), self.num_regions, self.num_dim))
+            #v_of_T = torch.normal(0,1,size = (len(torch.arange(0, sim_len, self.step_size)), self.num_regions, self.num_dim))
             state_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 2, self.num_dim)                # PRL edit
             if(withOptVars):
                 opt_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 4)
@@ -249,7 +249,7 @@ class RWW_Layer(torch.nn.Module):
 
 
             # Currents
-            I_E = self.W_E*self.I_0 + self.w_plus*self.J_NMDA*S_E + self.G*self.J_NMDA*Network_S_E - self.J*torch.ones(1,self.num_dim)*S_I + self.I_external
+            I_E = self.W_E*self.I_0 + self.w_plus*self.J_NMDA*S_E + self.G*self.J_NMDA*Network_S_E - torch.matmul(self.J,torch.ones(1,self.num_dim))*S_I + self.I_external
             I_I = self.W_I*self.I_0 + self.J_NMDA*S_E - S_I + self.Lambda*self.G*self.J_NMDA*Network_S_E
             
             # Firing Rates
