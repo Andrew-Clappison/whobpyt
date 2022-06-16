@@ -66,7 +66,7 @@ class RWW_Layer(torch.nn.Module):
     # Wong KF, Wang XJ. A recurrent network mechanism of time integration in perceptual decisions. Journal of Neuroscience. 2006 Jan 25;26(4):1314-28.
     # Friston KJ, Harrison L, Penny W. Dynamic causal modelling. Neuroimage. 2003 Aug 1;19(4):1273-302.  
   
-    def __init__(self, num_regions, params, Con_Mtx, Dist_Mtx, step_size = 0.0001, useBC = False):        
+    def __init__(self, num_regions, num_dim, params, Con_Mtx, Dist_Mtx, step_size = 0.0001, useBC = False):        
         super(RWW_Layer, self).__init__() # To inherit parameters attribute
         
         # Initialize the RWW Model 
@@ -83,6 +83,7 @@ class RWW_Layer(torch.nn.Module):
         self.step_size = step_size
         
         self.num_regions = num_regions
+        self.num_dim = num_dim
         self.Con_Mtx = Con_Mtx
         self.Dist_Mtx = Dist_Mtx
         
@@ -186,20 +187,21 @@ class RWW_Layer(torch.nn.Module):
             if(withOptVars):
                 opt_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 4).cuda()
         else:
-            v_of_T = torch.normal(0,1,size = (len(torch.arange(0, sim_len, self.step_size)), self.num_regions))
-            state_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 2)
+            v_of_T = torch.normal(0,1,size = (len(torch.arange(0, sim_len, self.step_size)), self.num_regions, self.num_dim))
+            state_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 2, self.num_dim)                # PRL edit
             if(withOptVars):
                 opt_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 4)
         
         # RWW and State Values
-        S_E = init_state[:, 0]
-        S_I = init_state[:, 1]
+        S_E = init_state[:, :, 0]
+        S_I = init_state[:, :, 1]
 
         num_steps = int(sim_len/self.step_size)
         for i in range(num_steps):
             
             if((not useDelays) & (not useLaplacian)):
                 Network_S_E =  torch.matmul(self.Con_Mtx, S_E)
+                #Network_S_E =  torch.matmul(S_E, self.Con_Mtx)
 
             if(useDelays & (not useLaplacian)):
                 # WARNING: This has not been tested
@@ -247,7 +249,7 @@ class RWW_Layer(torch.nn.Module):
 
 
             # Currents
-            I_E = self.W_E*self.I_0 + self.w_plus*self.J_NMDA*S_E + self.G*self.J_NMDA*Network_S_E - self.J*S_I + self.I_external
+            I_E = self.W_E*self.I_0 + self.w_plus*self.J_NMDA*S_E + self.G*self.J_NMDA*Network_S_E - self.J*torch.ones(1,self.num_dim)*S_I + self.I_external
             I_I = self.W_I*self.I_0 + self.J_NMDA*S_E - S_I + self.Lambda*self.G*self.J_NMDA*Network_S_E
             
             # Firing Rates
@@ -272,8 +274,8 @@ class RWW_Layer(torch.nn.Module):
                 S_E = torch.tanh(0.00001 + torch.nn.functional.relu(S_E - 0.00001))
                 S_I = torch.tanh(0.00001 + torch.nn.functional.relu(S_I - 0.00001))
             
-            state_hist[i, :, 0] = S_E
-            state_hist[i, :, 1] = S_I 
+            state_hist[i, :, 0, :] = S_E
+            state_hist[i, :, 1, :] = S_I 
 
             if useDelays:
                 self.delayed_S_E = self.delayed_S_E.clone(); self.delayed_S_E[self.buffer_idx, :] = S_E #TODO: This means that not back-propagating the network just the individual nodes
@@ -289,7 +291,7 @@ class RWW_Layer(torch.nn.Module):
                 opt_hist[i, :, 2] = r_I
                 opt_hist[i, :, 3] = r_E
             
-        state_vals = torch.cat((torch.unsqueeze(S_E, 1), torch.unsqueeze(S_I, 1)), 1)
+        state_vals = torch.cat((torch.unsqueeze(S_E, 2), torch.unsqueeze(S_I, 2)), 2)
         
         # So that RAM does not accumulate in later batches/epochs 
         # & Because can't back pass through twice
@@ -320,7 +322,7 @@ class EEG_Params():
         
         
 class EEG_Layer():
-    def __init__(self, num_regions, params, num_channels):        
+    def __init__(self, num_regions, num_dim, params, num_channels):        
         super(EEG_Layer, self).__init__() # To inherit parameters attribute
                 
         # Initialize the EEG Model 
@@ -330,6 +332,7 @@ class EEG_Layer():
         #  params: EEG_Params - This contains the EEG Parameters, to maintain a consistent paradigm
         
         self.num_regions = num_regions
+        self.num_dim = num_dim
         self.num_channels = num_channels
         
         #############################################
@@ -355,11 +358,12 @@ class EEG_Layer():
         if(useGPU):
             layer_hist = torch.zeros(int(sim_len/step_size), self.num_channels, 1).cuda()
         else:
-            layer_hist = torch.zeros(int(sim_len/step_size), self.num_channels, 1)
+            layer_hist = torch.zeros(int(sim_len/step_size), self.num_channels, 1, self.num_dim)
         
         num_steps = int(sim_len/step_size)
         for i in range(num_steps):
-            layer_hist[i, :, 0] = torch.matmul(self.LF, node_history[i, :, 0] - node_history[i, :, 1])
+            #layer_hist[i, :, 0] = torch.matmul(self.LF, node_history[i, :, 0] - node_history[i, :, 1])
+            layer_hist[i, :, 0, :] = torch.matmul(self.LF, node_history[i, :, 0, :] - node_history[i, :, 1, :])
             
         return layer_hist
 
@@ -389,7 +393,7 @@ class BOLD_Params():
         #q = 1   # deoxyhemoglobin content 
         
 class BOLD_Layer(torch.nn.Module):
-    def __init__(self, num_regions, params, useBC = False):        
+    def __init__(self, num_regions, num_dim, params, useBC = False):        
         super(BOLD_Layer, self).__init__() # To inherit parameters attribute
                 
         # Initialize the BOLD Model 
@@ -401,6 +405,7 @@ class BOLD_Layer(torch.nn.Module):
         #                   NOTE: This is discouraged as it will likely influence results. Instead, choose a smaller step size. 
         
         self.num_regions = num_regions
+        self.num_dim = num_dim
         
         #############################################
         ## BOLD Constants
@@ -451,18 +456,18 @@ class BOLD_Layer(torch.nn.Module):
         if(useGPU):
             layer_hist = torch.zeros(int(sim_len/step_size), self.num_regions, 4 + 1).cuda()
         else:
-            layer_hist = torch.zeros(int(sim_len/step_size), self.num_regions, 4 + 1)
+            layer_hist = torch.zeros(int(sim_len/step_size), self.num_regions, 4 + 1, self.num_dim)
         
         # BOLD State Values
-        x = init_state[:, 0]
-        f = init_state[:, 1]
-        v = init_state[:, 2]
-        q = init_state[:, 3]
+        x = init_state[:, :, 0]
+        f = init_state[:, :, 1]
+        v = init_state[:, :, 2]
+        q = init_state[:, :, 3]
         
         num_steps = int(sim_len/step_size)
         for i in range(num_steps):
             
-            z = node_history[i,:] 
+            z = node_history[i,:,:] 
             
             #BOLD State Variables
             dx = z - self.kappa*x - self.gammaB*(f - 1)
@@ -487,13 +492,13 @@ class BOLD_Layer(torch.nn.Module):
             #BOLD Calculation
             BOLD = self.V_0*(self.k_1*(1 - q) + self.k_2*(1 - q/v) + self.k_3*(1 - v))
             
-            layer_hist[i, :, 0] = x
-            layer_hist[i, :, 1] = f
-            layer_hist[i, :, 2] = v
-            layer_hist[i, :, 3] = q
-            layer_hist[i, :, 4] = BOLD
+            layer_hist[i, :, 0, :] = x
+            layer_hist[i, :, 1, :] = f
+            layer_hist[i, :, 2, :] = v
+            layer_hist[i, :, 3, :] = q
+            layer_hist[i, :, 4, :] = BOLD
             
-        state_vals = torch.cat((torch.unsqueeze(x, 1), torch.unsqueeze(f, 1), torch.unsqueeze(v, 1), torch.unsqueeze(q, 1)),1)
+        state_vals = torch.cat((torch.unsqueeze(x, 2), torch.unsqueeze(f, 2), torch.unsqueeze(v, 2), torch.unsqueeze(q, 2)),2)
         
         return state_vals, layer_hist
 
