@@ -193,8 +193,8 @@ class RWW_Layer(torch.nn.Module):
                 opt_hist = torch.zeros(int(sim_len/self.step_size), self.num_regions, 4)
         
         # RWW and State Values
-        S_E = init_state[:, :, 0]
-        S_I = init_state[:, :, 1]
+        S_E = init_state[:, 0, :]
+        S_I = init_state[:, 1, :]
 
         num_steps = int(sim_len/self.step_size)
         for i in range(num_steps):
@@ -291,7 +291,7 @@ class RWW_Layer(torch.nn.Module):
                 opt_hist[i, :, 2] = r_I
                 opt_hist[i, :, 3] = r_E
             
-        state_vals = torch.cat((torch.unsqueeze(S_E, 2), torch.unsqueeze(S_I, 2)), 2)
+        state_vals = torch.cat((torch.unsqueeze(S_E, 1), torch.unsqueeze(S_I, 1)), 1)
         
         # So that RAM does not accumulate in later batches/epochs 
         # & Because can't back pass through twice
@@ -459,10 +459,10 @@ class BOLD_Layer(torch.nn.Module):
             layer_hist = torch.zeros(int(sim_len/step_size), self.num_regions, 4 + 1, self.num_dim)
         
         # BOLD State Values
-        x = init_state[:, :, 0]
-        f = init_state[:, :, 1]
-        v = init_state[:, :, 2]
-        q = init_state[:, :, 3]
+        x = init_state[:, 0, :]
+        f = init_state[:, 1, :]
+        v = init_state[:, 2, :]
+        q = init_state[:, 3, :]
         
         num_steps = int(sim_len/step_size)
         for i in range(num_steps):
@@ -498,7 +498,7 @@ class BOLD_Layer(torch.nn.Module):
             layer_hist[i, :, 3, :] = q
             layer_hist[i, :, 4, :] = BOLD
             
-        state_vals = torch.cat((torch.unsqueeze(x, 2), torch.unsqueeze(f, 2), torch.unsqueeze(v, 2), torch.unsqueeze(q, 2)),2)
+        state_vals = torch.cat((torch.unsqueeze(x, 1), torch.unsqueeze(f, 1), torch.unsqueeze(v, 1), torch.unsqueeze(q, 1)),1)
         
         return state_vals, layer_hist
 
