@@ -60,7 +60,7 @@ sub = '100307'
 # define options for wong-wang model
 node_size = 83
 mask = np.tril_indices(node_size, -1)
-num_epoches = 15
+num_epoches = 5
 batch_size = 20
 step_size = 0.05
 input_size = 2
@@ -120,10 +120,10 @@ F.test(20)
 # Plot SC and fitted SC
 
 fig, ax = plt.subplots(1, 2, figsize=(5, 4))
-im0 = ax[0].imshow(sc, cmap='bwr')
+im0 = ax[0].imshow(sc, cmap='bwr', vmin = 0.0, vmax = 0.05)
 ax[0].set_title('The empirical SC')
 fig.colorbar(im0, ax=ax[0], fraction=0.046, pad=0.04)
-im1 = ax[1].imshow(F.model.sc_fitted.detach().numpy(), cmap='bwr')
+im1 = ax[1].imshow(F.model.sc_fitted.detach().numpy(), cmap='bwr', vmin = 0.0, vmax = 0.05)
 ax[1].set_title('The fitted SC')
 fig.colorbar(im1, ax=ax[1], fraction=0.046, pad=0.04)
 plt.show()
@@ -131,11 +131,11 @@ plt.show()
 # %%
 # Plot E I and simulated BOLD
 fig, ax = plt.subplots(1, 3, figsize=(12, 8))
-ax[0].plot(F.output_sim.E_test.T)
+ax[0].plot(F.simTS.getTS("E").T)
 ax[0].set_title('Test: E')
-ax[1].plot(F.output_sim.I_test.T)
+ax[1].plot(F.simTS.getTS("I").T)
 ax[1].set_title('Test: I')
-ax[2].plot(F.output_sim.bold_test.T)
+ax[2].plot(F.simTS.getTS("bold").T)
 ax[2].set_title('Test: BOLD')
 plt.show()
 
@@ -145,7 +145,7 @@ fig, ax = plt.subplots(1, 2, figsize=(5, 4))
 im0 = ax[0].imshow(fc_emp, cmap='bwr')
 ax[0].set_title('The empirical FC')
 fig.colorbar(im0, ax=ax[0], fraction=0.046, pad=0.04)
-im1 = ax[1].imshow(np.corrcoef(F.output_sim.bold_test), cmap='bwr')
+im1 = ax[1].imshow(np.corrcoef(F.simTS.getTS("bold")), cmap='bwr')
 ax[1].set_title('The simulated FC')
 fig.colorbar(im1, ax=ax[1], fraction=0.046, pad=0.04)
 plt.show()

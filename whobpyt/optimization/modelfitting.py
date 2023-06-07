@@ -7,7 +7,7 @@ module for model fitting using pytorch
 import numpy as np  # for numerical operations
 import torch
 import torch.optim as optim
-from whobpyt.datatypes.outputs import OutputNM
+from whobpyt.datatypes import OutputNM, timeSeries, trainingStats
 from whobpyt.models.RWW.RWW_np import RWW_np #This should be removed and made general
 import pickle
 from sklearn.metrics.pairwise import cosine_similarity
@@ -45,8 +45,12 @@ class Model_fitting:
         self.output_sim = OutputNM(self.model)
  
         self.ts = ts
-
+        
         self.cost = cost
+        
+        self.empTS = ts
+        self.simTS = timeSeries(self.model.state_names + self.model.info()['output_names'], model.step_size, model.node_size)
+        self.stats = trainingStats(self.model.info())
 
     def save(self, filename):
         with open(filename, 'wb') as f:
@@ -113,8 +117,9 @@ class Model_fitting:
         for i_epoch in range(self.num_epoches):
 
             # Create placeholders for the simulated states and outputs of entire time series.
-            for name in self.model.state_names + self.output_sim.output_names:
-                setattr(self.output_sim, name + '_train', [])
+            # for name in self.model.state_names + self.output_sim.output_names:
+            #    setattr(self.output_sim, name + '_train', [])
+            self.simTS.reset()
 
             # initial the external inputs
             external = torch.tensor(
@@ -147,12 +152,13 @@ class Model_fitting:
                 loss = self.cost.loss(sim, ts_window, self.model, next_window)
                 
                 # Put the batch of the simulated EEG, E I M Ev Iv Mv in to placeholders for entire time-series.
-                for name in self.model.state_names + self.output_sim.output_names:
-                    name_next = name + '_window'
-                    tmp_ls = getattr(self.output_sim, name + '_train')
-                    tmp_ls.append(next_window[name_next].detach().numpy())
-
-                    setattr(self.output_sim, name + '_train', tmp_ls)
+                # for name in self.model.state_names + self.output_sim.output_names:
+                #    name_next = name + '_window'
+                #    tmp_ls = getattr(self.output_sim, name + '_train')
+                #    tmp_ls.append(next_window[name_next].detach().numpy())
+                #
+                #    setattr(self.output_sim, name + '_train', tmp_ls)
+                self.simTS.append(next_window, "_window")
 
                 loss_his.append(loss.detach().numpy())
 
@@ -196,9 +202,10 @@ class Model_fitting:
             ts_emp = np.concatenate(list(self.ts[i_epoch]),1)
             fc = np.corrcoef(ts_emp)
 
-            tmp_ls = getattr(self.output_sim, self.output_sim.output_names[0] + '_train')
-            ts_sim = np.concatenate(tmp_ls, axis=1)
-            fc_sim = np.corrcoef(ts_sim[:, 10:])
+            #tmp_ls = getattr(self.output_sim, self.output_sim.output_names[0] + '_train')
+            #ts_sim = np.concatenate(tmp_ls, axis=1)
+            ts_sim = self.simTS.getTS(self.model.info()['output_names'][0])
+            fc_sim = np.corrcoef(ts_sim[:, 10:]) #10 should be replaced by a transient time variable that is much larger
 
             print('epoch: ', i_epoch, 
                   'loss:', loss.detach().numpy(),
@@ -209,9 +216,9 @@ class Model_fitting:
                 print('Modelparam_lr: ', modelparameter_scheduler.get_last_lr()[0])
                 print('Hyperparam_lr: ', hyperparameter_scheduler.get_last_lr()[0])
 
-            for name in self.model.state_names + self.output_sim.output_names:
-                tmp_ls = getattr(self.output_sim, name + '_train')
-                setattr(self.output_sim, name + '_train', np.concatenate(tmp_ls, axis=1))
+            #for name in self.model.state_names + self.output_sim.output_names:
+            #    tmp_ls = getattr(self.output_sim, name + '_train')
+            #    setattr(self.output_sim, name + '_train', np.concatenate(tmp_ls, axis=1))
 
             self.output_sim.loss = np.array(loss_his)
 
@@ -254,9 +261,11 @@ class Model_fitting:
 
         # define num_windows
         num_windows = self.ts.shape[1]
+        
         # Create placeholders for the simulated BOLD E I x f and q of entire time series.
-        for name in self.model.state_names + self.output_sim.output_names:
-            setattr(self.output_sim, name + '_test', [])
+        # for name in self.model.state_names + self.output_sim.output_names:
+        #    setattr(self.output_sim, name + '_test', [])
+        self.simTS.reset()
 
         u_hat = np.zeros(
             (self.model.node_size,self.model.steps_per_TR,
@@ -277,12 +286,13 @@ class Model_fitting:
             next_window, hE_new = self.model(external, X, hE)
 
             if TR_i > base_window_num - 1:
-                for name in self.model.state_names + self.output_sim.output_names:
-                    name_next = name + '_window'
-                    tmp_ls = getattr(self.output_sim, name + '_test')
-                    tmp_ls.append(next_window[name_next].detach().numpy())
-
-                    setattr(self.output_sim, name + '_test', tmp_ls)
+                #for name in self.model.state_names + self.output_sim.output_names:
+                #    name_next = name + '_window'
+                #    tmp_ls = getattr(self.output_sim, name + '_test')
+                #    tmp_ls.append(next_window[name_next].detach().numpy())
+                #
+                #    setattr(self.output_sim, name + '_test', tmp_ls)
+                self.simTS.append(next_window, "_window")
 
             # last update current state using next state...
             # (no direct use X = X_next, since gradient calculation only depends on one batch no history)
@@ -291,16 +301,17 @@ class Model_fitting:
         
         ts_emp = np.concatenate(list(self.ts[-1]),1)
         fc = np.corrcoef(ts_emp)
-        tmp_ls = getattr(self.output_sim, self.output_sim.output_names[0] + '_test')
-        ts_sim = np.concatenate(tmp_ls, axis=1)
+        #tmp_ls = getattr(self.output_sim, self.output_sim.output_names[0] + '_test')
+        #ts_sim = np.concatenate(tmp_ls, axis=1)
+        ts_sim = self.simTS.getTS(self.model.info()['output_names'][0])
 
         fc_sim = np.corrcoef(ts_sim[:, transient_num:])
         print('FC_cor: ', np.corrcoef(fc_sim[mask_e], fc[mask_e])[0, 1], 
               'cos_sim: ', np.diag(cosine_similarity(ts_sim, ts_emp)).mean())
               
-        for name in self.model.state_names + self.output_sim.output_names:
-            tmp_ls = getattr(self.output_sim, name + '_test')
-            setattr(self.output_sim, name + '_test', np.concatenate(tmp_ls, axis=1))
+        #for name in self.model.state_names + self.output_sim.output_names:
+        #    tmp_ls = getattr(self.output_sim, name + '_test')
+        #    setattr(self.output_sim, name + '_test', np.concatenate(tmp_ls, axis=1))
 
     def test_realtime(self, tr_p, step_size_n, step_size, num_windows):
         if self.model.model_name == 'RWW':

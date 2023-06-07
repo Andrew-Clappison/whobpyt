@@ -253,7 +253,7 @@ print(list(model.named_parameters()))
 #
 
 randdata = np.random.rand(15000, 8)
-num_epochs = 20
+num_epochs = 5
 TRperwindow = 15000
 randTS = dataloader(randdata, num_epochs, TRperwindow)
 
@@ -320,8 +320,8 @@ plt.title("J_{i} Values Changing Over Training Epochs")
 plt.figure(figsize = (16, 8))
 plt.title("S_E and S_I")
 for n in range(num_regions):
-    plt.plot(F.output_sim.E_test[:,n], label = "S_E Node = " + str(n))
-    plt.plot(F.output_sim.I_test[:,n], label = "S_I Node = " + str(n))
+    plt.plot(F.simTS.getTS("E")[:,n], label = "S_E Node = " + str(n))
+    plt.plot(F.simTS.getTS("I")[:,n], label = "S_I Node = " + str(n))
 
 plt.xlabel('Time Steps (multiply by step_size to get msec), step_size = ' + str(step_size))
 plt.legend()
@@ -334,7 +334,7 @@ plt.legend()
 #
 
 sampleFreqHz = 1000*(1/step_size)
-sdAxis, sdValues = CostsPSD.calcPSD(torch.tensor(F.output_sim.eeg_test), sampleFreqHz, minFreq = 2, maxFreq = 40)
+sdAxis, sdValues = CostsPSD.calcPSD(torch.tensor(F.simTS.getTS("eeg")), sampleFreqHz, minFreq = 2, maxFreq = 40)
 sdAxis_dS, sdValues_dS = CostsPSD.downSmoothPSD(sdAxis, sdValues, 32)
 sdAxis_dS, sdValues_dS_scaled = CostsPSD.scalePSD(sdAxis_dS, sdValues_dS)
 
@@ -351,7 +351,7 @@ plt.title("Simulated EEG PSD: After Training")
 # ---------------------------------------------------
 #
 
-sim_FC = np.corrcoef(F.output_sim.bold_test[:,skip_trans:])
+sim_FC = np.corrcoef(F.simTS.getTS("bold")[:,skip_trans:])
 
 plt.figure(figsize = (8, 8))
 plt.title("Simulated BOLD FC: After Training")
