@@ -129,8 +129,8 @@ u[:,:,110:120]= 200
 F.train(u=u, epoch_min = 100, r_lb = 0.95)
 
 # %%
-# model test with 20 window for warmup
-F.test(200, u =u)
+# model test with 10 window for warmup
+F.evaluate(0, u =u)
 
 # %%
 # Plot SC and fitted SC

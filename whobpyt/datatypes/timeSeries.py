@@ -18,6 +18,7 @@ class timeSeries:
         self.names = names #The list of names for: EEG, BOLD, or state_names
         self.step_size = 0
         self.numRegions = 0
+        self.numBlocks = 0
         
         self.ts = {}
     

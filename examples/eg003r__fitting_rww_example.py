@@ -113,8 +113,8 @@ F = Model_fitting(model, data_mean, num_epoches, ObjFun)
 F.train(learningrate= 0.05)
 
 # %%
-# model test with 20 window for warmup
-F.test(20)
+# model test with 10 window for warmup
+F.evaluate(0)
 
 # %%
 # Plot SC and fitted SC

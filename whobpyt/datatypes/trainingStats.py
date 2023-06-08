@@ -20,15 +20,22 @@ class trainingStats:
         
         self.model_pars = {}
         self.hyper_pars = {}
+        
+    def reset(self):
+        self.train_loss = []
+        self.val_loss = []
+        
+        self.model_pars = {}
+        self.hyper_pars = {}
 
     def appendTL(self):
-        """ Append Hyper Parameters """
+        """ Append Trainig Loss """
         
     def appendVL(self):
-        """ Append Hyper Parameters """    
+        """ Append Validation Loss """    
 
     def appendMP(self):
-        """ Append Hyper Parameters """    
+        """ Append Model Parameters """    
 
     def appendHP(self):
         """ Append Hyper Parameters """

@@ -150,17 +150,6 @@ class Model_fitting:
                 
                 sim = next_window[self.model.output_names[0] + "_window"]
                 loss = self.cost.loss(sim, ts_window, self.model, next_window)
-                
-                # Put the batch of the simulated EEG, E I M Ev Iv Mv in to placeholders for entire time-series.
-                # for name in self.model.state_names + self.output_sim.output_names:
-                #    name_next = name + '_window'
-                #    tmp_ls = getattr(self.output_sim, name + '_train')
-                #    tmp_ls.append(next_window[name_next].detach().numpy())
-                #
-                #    setattr(self.output_sim, name + '_train', tmp_ls)
-                self.simTS.append(next_window, "_window")
-
-                loss_his.append(loss.detach().numpy())
 
                 # Calculate gradient using backward (backpropagation) method of the loss function.
                 loss.backward(retain_graph=True)
@@ -177,6 +166,17 @@ class Model_fitting:
                     # schedular step 
                     hyperparameter_scheduler.step()
                     modelparameter_scheduler.step()
+
+                # Put the batch of the simulated EEG, E I M Ev Iv Mv in to placeholders for entire time-series.
+                # for name in self.model.state_names + self.output_sim.output_names:
+                #    name_next = name + '_window'
+                #    tmp_ls = getattr(self.output_sim, name + '_train')
+                #    tmp_ls.append(next_window[name_next].detach().numpy())
+                #
+                #    setattr(self.output_sim, name + '_train', tmp_ls)           
+                self.simTS.append(next_window, "_window")
+
+                loss_his.append(loss.detach().numpy())
 
                 # Put the updated model parameters into the history placeholders.
                 # sc_par.append(self.model.sc[mask].copy())
@@ -233,85 +233,92 @@ class Model_fitting:
         for key, value in fit_param.items():
             setattr(self.output_sim, key, np.array(value))
 
-    def test(self, base_window_num, u=0):
+    def evaluate(self, base_window_num = 0, transient_num = 10, u = 0):
         """
+        The purpose of this is to run an epoch getting the time series and stats, but not updaing model weights.
+        
         Parameters
         ----------
-        base_window_num: int
-            length of num_windows for resting
-        u : external or stimulus
-        -----------
+        learningrate : for machine learing speed
+        u: stimulus
+
         """
-
-        # define some constants
-        transient_num = 10
-
-        self.u = u
-
-        # initial state
-        X = self.model.createIC(ver = 1)
-        # initials of history of E
-        hE = self.model.createDelayIC(ver = 1)
-
-        # placeholders for model parameters
-
-        # define mask for getting lower triangle matrix
-        mask = np.tril_indices(self.model.node_size, -1)
-        mask_e = np.tril_indices(self.model.output_size, -1)
-
-        # define num_windows
-        num_windows = self.ts.shape[1]
         
-        # Create placeholders for the simulated BOLD E I x f and q of entire time series.
-        # for name in self.model.state_names + self.output_sim.output_names:
-        #    setattr(self.output_sim, name + '_test', [])
         self.simTS.reset()
-
-        u_hat = np.zeros(
-            (self.model.node_size,self.model.steps_per_TR,
-             base_window_num *self.model.TRs_per_window + self.ts.shape[1]*self.ts.shape[3]))
-        u_hat[:, :, base_window_num * self.model.TRs_per_window:] = self.u
-
-        # Perform the training in batches.
-
-        for TR_i in range(num_windows + base_window_num):
-
-            # Get the input and output noises for the module.
-
-            external = torch.tensor(
-                (u_hat[:, :, TR_i * self.model.TRs_per_window:(TR_i + 1) * self.model.TRs_per_window]),
-                dtype=torch.float32)
-
-            # Use the model.forward() function to update next state and get simulated EEG in this batch.
-            next_window, hE_new = self.model(external, X, hE)
-
-            if TR_i > base_window_num - 1:
-                #for name in self.model.state_names + self.output_sim.output_names:
-                #    name_next = name + '_window'
-                #    tmp_ls = getattr(self.output_sim, name + '_test')
-                #    tmp_ls.append(next_window[name_next].detach().numpy())
-                #
-                #    setattr(self.output_sim, name + '_test', tmp_ls)
-                self.simTS.append(next_window, "_window")
-
-            # last update current state using next state...
-            # (no direct use X = X_next, since gradient calculation only depends on one batch no history)
-            X = torch.tensor(next_window['current_state'].detach().numpy(), dtype=torch.float32)
-            hE = torch.tensor(hE_new.detach().numpy(), dtype=torch.float32)
+        self.stats.reset()
         
-        ts_emp = np.concatenate(list(self.ts[-1]),1)
-        fc = np.corrcoef(ts_emp)
-        #tmp_ls = getattr(self.output_sim, self.output_sim.output_names[0] + '_test')
-        #ts_sim = np.concatenate(tmp_ls, axis=1)
-        ts_sim = self.simTS.getTS(self.model.info()['output_names'][0])
+        i_epoch = 0 #TODO: Update code so this is not necessary
 
-        fc_sim = np.corrcoef(ts_sim[:, transient_num:])
-        print('FC_cor: ', np.corrcoef(fc_sim[mask_e], fc[mask_e])[0, 1], 
-              'cos_sim: ', np.diag(cosine_similarity(ts_sim, ts_emp)).mean())
-              
-        #for name in self.model.state_names + self.output_sim.output_names:
-        #    tmp_ls = getattr(self.output_sim, name + '_test')
-        #    setattr(self.output_sim, name + '_test', np.concatenate(tmp_ls, axis=1))
+        with torch.no_grad():
+
+            self.u = u
+            
+            # initial state
+            X = self.model.createIC(ver = 1)
+            # initials of history of E
+            hE = self.model.createDelayIC(ver = 1)
+
+            # define masks for getting lower triangle matrix indices
+            mask = np.tril_indices(self.model.node_size, -1)
+            mask_e = np.tril_indices(self.model.output_size, -1)
+
+            loss_his = []  # loss placeholder
+
+            # define num_windows
+            num_windows = self.ts.shape[1]
+
+            u_hat = np.zeros(
+                (self.model.node_size,self.model.steps_per_TR,
+                 base_window_num *self.model.TRs_per_window + self.ts.shape[1]*self.ts.shape[3]))
+            u_hat[:, :, base_window_num * self.model.TRs_per_window:] = self.u
+            
+            # Perform simulation in windows.
+            for TR_i in range(num_windows + base_window_num):
+
+                # Get the input and output noises for the module.
+
+                external = torch.tensor(
+                    (u_hat[:, :, TR_i * self.model.TRs_per_window:(TR_i + 1) * self.model.TRs_per_window]),
+                    dtype=torch.float32)
+
+                # Use the model.forward() function to update next state and get simulated EEG in this batch.
+                next_window, hE_new = self.model(external, X, hE)
+
+                if TR_i > base_window_num - 1:
+                    self.simTS.append(next_window, "_window")
+
+                # Get the batch of empirical signal.
+                if (...)
+                ts_window = torch.tensor(self.ts[i_epoch, TR_i - base_window_num, :, :], dtype=torch.float32)
+
+                # calculating loss
+                
+                sim = next_window[self.model.output_names[0] + "_window"]
+                loss = self.cost.loss(sim, ts_window, self.model, next_window)
+
+                loss_his.append(loss.detach().numpy())
+
+                # last update current state using next state...
+                # (no direct use X = X_next, since gradient calculation only depends on one batch no history)
+                X = torch.tensor(next_window['current_state'].detach().numpy(), dtype=torch.float32)
+                hE = torch.tensor(hE_new.detach().numpy(), dtype=torch.float32)
+
+            ts_emp = np.concatenate(list(self.ts[-1]),1)
+            fc = np.corrcoef(ts_emp)
+
+            ts_sim = self.simTS.getTS(self.model.info()['output_names'][0])
+            fc_sim = np.corrcoef(ts_sim[:, transient_num:])
+
+            print('loss:', loss.detach().numpy(),
+                  'FC_cor: ', np.corrcoef(fc_sim[mask_e], fc[mask_e])[0, 1], 
+                  'cos_sim: ', np.diag(cosine_similarity(ts_sim, ts_emp)).mean())
+                  
+            self.output_sim.loss = np.array(loss_his)
+
+    def npValidate(self, npModel):
+        """ Validate on a Numpy Unaltered Version of the Model """
+        pass
+
 
     def test_realtime(self, tr_p, step_size_n, step_size, num_windows):
         if self.model.model_name == 'RWW':
@@ -365,3 +372,11 @@ class Model_fitting:
                 setattr(self.output_sim, name + '_test', np.concatenate(tmp_ls, axis=1))
         else:
             print("only RWW model for the test_realtime function")
+
+def appendDict(dictTS_A, dictTS_B):
+    ''' Appends dictTS_B timeseries to the end of dictTS_A '''
+    if not(dictTS_A.keys == dictTS_B.keys):
+        print("ERROR: Dictionary Keys Don't Match")
+        return
+    for key in dictTS_A.keys():
+        dictTS_A[key].append(dictTS_B[key])

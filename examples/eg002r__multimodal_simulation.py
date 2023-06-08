@@ -265,8 +265,8 @@ F = Model_fitting(model, randTS, num_epochs, ObjFun)
 F.train(learningrate= 0.1, lr_scheduler = False)
 
 # %%
-# model test with 20 window for warmup
-F.test(0)
+# model evaluate with 20 window for warmup
+F.evaluate(0)
 
 
 #LossComp = list()
