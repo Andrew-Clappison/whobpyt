@@ -6,136 +6,135 @@ module for wong-wang model
 
 import torch
 from torch.nn.parameter import Parameter
-from whobpyt.datatypes.AbstractParams import AbstractParams
-from whobpyt.datatypes.AbstractNMM import AbstractNMM
+from whobpyt.datatypes import AbstractNMM, AbstractParams, par
+from whobpyt.models.RWW import ParamsRWW
 import numpy as np  # for numerical operations
-
-class ParamsRWW(AbstractParams):
-    
-    def __init__(self, **kwargs):
-       
-        param = {
-
-            "std_in": [0.02, 0],  # standard deviation of the Gaussian noise
-            "std_out": [0.02, 0],  # standard deviation of the Gaussian noise
-            # Parameters for the ODEs
-            # Excitatory population
-            "W_E": [1., 0],  # scale of the external input
-            "tau_E": [100., 0],  # decay time
-            "gamma_E": [0.641 / 1000., 0],  # other dynamic parameter (?)
-
-            # Inhibitory population
-            "W_I": [0.7, 0],  # scale of the external input
-            "tau_I": [10., 0],  # decay time
-            "gamma_I": [1. / 1000., 0],  # other dynamic parameter (?)
-
-            # External input
-            "I_0": [0.32, 0],  # external input
-            "I_external": [0., 0],  # external stimulation
-
-            # Coupling parameters
-            "g": [20., 0],  # global coupling (from all nodes E_j to single node E_i)
-            "g_EE": [.1, 0],  # local self excitatory feedback (from E_i to E_i)
-            "g_IE": [.1, 0],  # local inhibitory coupling (from I_i to E_i)
-            "g_EI": [0.1, 0],  # local excitatory coupling (from E_i to I_i)
-
-            "aE": [310, 0],
-            "bE": [125, 0],
-            "dE": [0.16, 0],
-            "aI": [615, 0],
-            "bI": [177, 0],
-            "dI": [0.087, 0],
-
-            # Output (BOLD signal)
-
-            "alpha": [0.32, 0],
-            "rho": [0.34, 0],
-            "k1": [2.38, 0],
-            "k2": [2.0, 0],
-            "k3": [0.48, 0],  # adjust this number from 0.48 for BOLD fluctruate around zero
-            "V": [.02, 0],
-            "E0": [0.34, 0],
-            "tau_s": [1 / 0.65, 0],
-            "tau_f": [1 / 0.41, 0],
-            "tau_0": [0.98, 0],
-            "mu": [0.5, 0]
-
-        }
-
-        for var in param:
-            setattr(self, var, param[var])
-
-        for var in kwargs:
-            setattr(self, var, kwargs[var])
-
 
 class RNNRWW(AbstractNMM):
     """
     A module for forward model (WWD) to simulate a window of BOLD signals
-    Attibutes
+    
+    Note that the BOLD signal is not done in the standard way, 
+    and there are other customizations to the neural mass model that may 
+    deviate from standard differential equation simulation. Thus, the
+    parameter should be tested on a validation model after fitting. 
+ 
+ 
+    Attributes
     ---------
+    
+    state_names: list
+        A list of model state variable names
+    output_names: list
+        A list of model output variable names
+    model_name: string
+        The name of the model itself
     state_size : int
-        the number of states in the WWD model
-    input_size : int
-        the number of states with noise as input
+        The number of states in the WWD model
     tr : float
-        tr of fMRI image
+        tr of fMRI image. That is, the spacing betweeen images in the time series. 
     step_size: float
         Integration step for forward model
     steps_per_TR: int
-        the number of step_size in a tr
+        The number of step_size in a tr. This is calculated automatically as int(tr / step_size).
     TRs_per_window: int
-        the number of BOLD signals to simulate
+        The number of BOLD TRs to simulate in one forward call
     node_size: int
-        the number of ROIs
+        The number of ROIs
+    sampling_size: int
+        This is related to an averaging of NMM values before inputing into hemodynamic equaitons. This is non-standard.        
     sc: float node_size x node_size array
-        structural connectivity
-    fit_gains: bool
-        flag for fitting gains 1: fit 0: not fit
-    g, g_EE, gIE, gEI: tensor with gradient on
-        model parameters to be fit
-    gains_con: tensor with node_size x node_size (grad on depends on fit_gains)
-        connection gains exp(gains_con)*sc
-    std_in std_out: tensor with gradient on
-        std for state noise and output noise
-    g_m g_v f_EE_m g_EE_v sup_ca sup_cb sup_cc: tensor with gradient on
-        hyper parameters for prior distribution of g gEE gIE and gEI
+        The structural connectivity matrix
+    sc_fitted: bool
+        The fitted structural connectivity
+    use_fit_gains: tensor with node_size x node_size (grad on depends on fit_gains)
+        Whether to fit the structural connectivity, will fit via connection gains: exp(gains_con)*sc
+    use_Laplacian: bool
+        Whether to use the negative laplacian of the (fitted) structural connectivity as the structural connectivity
+    use_Bifurcation: bool
+        Use a custom objective function component
+    use_Gaussian_EI: bool
+        Use a custom objective function component
+    use_dynamic_boundary: bool
+        Whether to have tanh function applied at each time step to constrain parameter values. Simulation results will become dependent on a certian step_size. 
+    params: ParamsRWW
+        A object that contains the parameters for the RWW nodes
+    params_fitted: dictionary
+        A dictionary containg fitted parameters and fitted hyper_parameters
+    output_size: int
+        Number of ROIs
+  
     Methods
     -------
+    
     forward(input, external, hx, hE)
         forward model (WWD) for generating a number of BOLD signals with current model parameters
+    info(self)
+        A function that returns a dictionary with model information.
+    createIC(self, ver)
+        A function to return an initial state tensor for the model.
+    setModelParameters(self)
+        A function that assigns model parameters as model attributes and also to assign parameters and hyperparameters for fitting, 
+        so that the inherited Torch functionality can be used. 
+        This practice may be replaced soon.  
+   
+    Other
+    -------
+        g_m g_v f_EE_m g_EE_v sup_ca sup_cb sup_cc: tensor with gradient on
+        hyper parameters for prior distribution of g gEE gIE and gEI
+        
+        g, g_EE, gIE, gEI: tensor with gradient on
+        model parameters to be fit
+        
+        std_in std_out: tensor with gradient on
+        std for state noise and output noise
+
     """
-    state_names = ['E', 'I', 'x', 'f', 'v', 'q']
-    model_name = "RWW"
     use_fit_lfm = False
     input_size = 2
 
     def __init__(self, node_size: int,
                  TRs_per_window: int, step_size: float, sampling_size: float, tr: float, sc: float, use_fit_gains: bool,
-                 param: ParamsRWW, use_Bifurcation=True, use_Gaussian_EI=False, use_Laplacian=True,
+                 params: ParamsRWW, use_Bifurcation=True, use_Gaussian_EI=False, use_Laplacian=True,
                  use_dynamic_boundary=True) -> None:
+        
         """
         Parameters
         ----------
-
-        tr : float
-            tr of fMRI image
+            
+        node_size: int
+            The number of ROIs
+        TRs_per_window: int
+            The number of BOLD TRs to simulate in one forward call    
         step_size: float
             Integration step for forward model
-        TRs_per_window: int
-            the number of BOLD signals to simulate
-        node_size: int
-            the number of ROIs
+        sampling_size:
+            This is related to an averaging of NMM values before inputing into hemodynamic equaitons. This is non-standard. 
+        tr : float
+            tr of fMRI image. That is, the spacing betweeen images in the time series. 
         sc: float node_size x node_size array
-            structural connectivity
+            The structural connectivity matrix
         use_fit_gains: bool
-            flag for fitting gains 1: fit 0: not fit
+            Whether to fit the structural connectivity, will fit via connection gains: exp(gains_con)*sc
+        params: ParamsRWW
+            A object that contains the parameters for the RWW nodes
+        use_Bifurcation: bool
+            Use a custom objective function component
+        use_Gaussian_EI: bool
+            Use a custom objective function component
         use_Laplacian: bool
-            using Laplacian or not
-        param: ParamsModel
-            define model parameters(var:0 constant var:non-zero Parameter)
+            Whether to use the negative laplacian of the (fitted) structural connectivity as the structural connectivity
+        use_dynamic_boundary: bool
+            Whether to have tanh function applied at each time step to constrain parameter values. Simulation results will become dependent on a certian step_size.
         """
+        
         super(RNNRWW, self).__init__()
+        
+        self.state_names = ['E', 'I', 'x', 'f', 'v', 'q']
+        self.output_names = ["bold"]
+        self.track_params = [] #Is populated during setModelParameters()
+        
+        self.model_name = "RWW"
         self.state_size = 6  # 6 states WWD model
         # self.input_size = input_size  # 1 or 2
         self.tr = tr  # tr fMRI image
@@ -151,23 +150,110 @@ class RNNRWW(AbstractNMM):
         self.use_Bifurcation = use_Bifurcation
         self.use_Gaussian_EI = use_Gaussian_EI
         self.use_dynamic_boundary = use_dynamic_boundary
-        self.param = param
+        self.params = params
+        self.params_fitted = {}
 
-        self.output_size = node_size  # number of EEG channels
+        self.output_size = node_size
+        
+        self.setModelParameters()
     
     def info(self):
-        return {"state_names": ['E', 'I', 'x', 'f', 'v', 'q'], "output_name": "bold"}
+        """
+        
+        A function that returns a dictionary with model information.
+        
+        Parameters
+        ----------
+        
+        None
+        
+        
+        Returns
+        ----------
+        
+        Dictionary of Lists
+            The List contain State Names and Output Names 
+        
+        
+        """
+    
+        return {"state_names": ['E', 'I', 'x', 'f', 'v', 'q'], "output_names": ["bold"]}
     
     def createIC(self, ver):
+        """
+        
+            A function to return an initial state tensor for the model.    
+        
+        Parameters
+        ----------
+        
+        ver: int
+            Ignored Parameter
+        
+        
+        Returns
+        ----------
+        
+        Tensor
+            Random Initial Conditions for RWW & BOLD 
+        
+        
+        """
+        
         # initial state
         return torch.tensor(0.2 * np.random.uniform(0, 1, (self.node_size, self.state_size)) + np.array(
                 [0, 0, 0, 1.0, 1.0, 1.0]), dtype=torch.float32)
 
     def setModelParameters(self):
+        """
+        
+        A function that assigns model parameters as model attributes and also to assign parameters and hyperparameters for fitting, 
+        so that the inherited Torch functionality can be used. 
+        This practice may be replaced soon. 
+
+        
+        Parameters
+        ----------
+        
+        None
+        
+        
+        Returns
+        ----------
+        
+        Dictionary of Lists
+            Keys are State Names and Output Names (with _window appended to the name)
+            Contents are the time series from model simulation
+        
+        """    
+    
+    
         # set states E I f v mean and 1/sqrt(variance)
         return setModelParameters(self)
 
     def forward(self, external, hx, hE):
+        """
+        
+        Forward step in simulating the BOLD signal.
+        
+        Parameters
+        ----------
+        external: tensor with node_size x steps_per_TR x TRs_per_window x input_size
+            noise for states
+        
+        hx: tensor with node_size x state_size
+            states of WWD model
+        
+        Returns
+        -------
+        next_state: dictionary with Tensors
+            Tensor dimension [Num_Time_Points, Num_Regions]
+        
+        with keys: 'current_state''bold_window''E_window''I_window''x_window''f_window''v_window''q_window'
+            record new states and BOLD
+            
+        """
+        
         return integration_forward(self, external, hx, hE)
 
 def h_tf(a, b, d, z):
@@ -182,78 +268,116 @@ def h_tf(a, b, d, z):
     return torch.divide(num, den)
 
 def setModelParameters(model):
-
+    param_reg = [] #NMM Equation Parameters
+    param_hyper = [] #Mean and Variance of NMM Equation Parameters, and others
+    
     if model.use_Gaussian_EI:
         model.E_m = Parameter(torch.tensor(0.16, dtype=torch.float32))
+        param_hyper.append(model.E_m)
         model.I_m = Parameter(torch.tensor(0.1, dtype=torch.float32))
+        param_hyper.append(model.I_m)
         # model.f_m = Parameter(torch.tensor(1.0, dtype=torch.float32))
         model.v_m = Parameter(torch.tensor(1.0, dtype=torch.float32))
+        param_hyper.append(model.v_m)
         # model.x_m = Parameter(torch.tensor(0.16, dtype=torch.float32))
         model.q_m = Parameter(torch.tensor(1.0, dtype=torch.float32))
+        param_hyper.append(model.q_m)
 
         model.E_v_inv = Parameter(torch.tensor(2500, dtype=torch.float32))
+        param_hyper.append(model.E_v_inv)
         model.I_v_inv = Parameter(torch.tensor(2500, dtype=torch.float32))
+        param_hyper.append(model.I_v_inv)
         # model.f_v = Parameter(torch.tensor(100, dtype=torch.float32))
         model.v_v_inv = Parameter(torch.tensor(100, dtype=torch.float32))
+        param_hyper.append(model.v_v_inv)
         # model.x_v = Parameter(torch.tensor(100, dtype=torch.float32))
         model.q_v_inv = Parameter(torch.tensor(100, dtype=torch.float32))
+        param_hyper.append(model.v_v_inv)
 
     # hyper parameters (variables: need to calculate gradient) to fit density
     # of gEI and gIE (the shape from the bifurcation analysis on an isolated node)
     if model.use_Bifurcation:
         model.sup_ca = Parameter(torch.tensor(0.5, dtype=torch.float32))
+        param_hyper.append(model.sup_ca)
         model.sup_cb = Parameter(torch.tensor(20, dtype=torch.float32))
+        param_hyper.append(model.sup_cb)
         model.sup_cc = Parameter(torch.tensor(10, dtype=torch.float32))
+        param_hyper.append(model.sup_cc)
 
     # set gains_con as Parameter if fit_gain is True
     if model.use_fit_gains:
         model.gains_con = Parameter(torch.tensor(np.zeros((model.node_size, model.node_size)) + 0.05,
                                                  dtype=torch.float32))  # connenction gain to modify empirical sc
+        param_reg.append(model.gains_con)
     else:
         model.gains_con = torch.tensor(np.zeros((model.node_size, model.node_size)), dtype=torch.float32)
 
-    vars_name = [a for a in dir(model.param) if not a.startswith('__') and not callable(getattr(model.param, a))]
-    for var in vars_name:
-        if np.any(getattr(model.param, var)[1] > 0):
-            setattr(model, var, Parameter(
-                torch.tensor(getattr(model.param, var)[0] + getattr(model.param, var)[1] * np.random.randn(1, )[0],
-                             dtype=torch.float32)))
-            if model.use_Bifurcation:
-                if var not in ['std_in', 'g_IE', 'g_EI']:
-                    dict_nv = {'m': getattr(model.param, var)[0], 'v': 1 / (getattr(model.param, var)[1]) ** 2}
+    var_names = [a for a in dir(model.params) if not a.startswith('__')]
+    for var_name in var_names:
+        var = getattr(model.params, var_name)
+        if (type(var) == par): 
+            if (var.fit_hyper == True):
+                var.randSet() #TODO: This should be done before giving params to model class
+                param_hyper.append(var.prior_mean)
+                param_hyper.append(var.prior_var) #TODO: Currently this is _v_inv but should set everything to just variance unless there is a reason to keep the inverse?
+                
+            if (var.fit_par == True):
+                param_reg.append(var.val) #TODO: This should got before fit_hyper, but need to change where randomness gets added in the code first                
+                model.track_params.append(var_name)
+            
+            if (var.fit_par | var.fit_hyper):
+                model.track_params.append(var_name) #NMM Parameters
 
-                    dict_np = {'m': var + '_m', 'v': var + '_v_inv'}
-
-                    for key in dict_nv:
-                        setattr(model, dict_np[key], Parameter(torch.tensor(dict_nv[key], dtype=torch.float32)))
-            else:
-                if var not in ['std_in']:
-                    dict_nv = {'m': getattr(model.param, var)[0], 'v': 1 / (getattr(model.param, var)[1]) ** 2}
-
-                    dict_np = {'m': var + '_m', 'v': var + '_v_inv'}
-
-                    for key in dict_nv:
-                        setattr(model, dict_np[key], Parameter(torch.tensor(dict_nv[key], dtype=torch.float32)))
-        else:
-            setattr(model, var, torch.tensor(getattr(model.param, var)[0], dtype=torch.float32))
+    model.params_fitted = {'modelparameter': param_reg,'hyperparameter': param_hyper}
 
 def integration_forward(model, external, hx, hE):
 
-    """
-    Forward step in simulating the BOLD signal.
-    Parameters
-    ----------
-    external: tensor with node_size x steps_per_TR x TRs_per_window x input_size
-        noise for states
+    # Defining NMM Parameters to simplify later equations
+    std_in = model.params.std_in.value()  # standard deviation of the Gaussian noise
+    std_out = model.params.std_out.value()  # standard deviation of the Gaussian noise
+    
+    # Parameters for the ODEs
+    # Excitatory population
+    W_E = model.params.W_E.value()  # scale of the external input
+    tau_E = model.params.tau_E.value()  # decay time
+    gamma_E = model.params.gamma_E.value()  # other dynamic parameter (?)
 
-    hx: tensor with node_size x state_size
-        states of WWD model
-    Outputs
-    -------
-    next_state: dictionary with keys:
-    'current_state''bold_window''E_window''I_window''x_window''f_window''v_window''q_window'
-        record new states and BOLD
-    """
+    # Inhibitory population
+    W_I = model.params.W_I.value()  # scale of the external input
+    tau_I = model.params.tau_I.value()  # decay time
+    gamma_I = model.params.gamma_I.value()  # other dynamic parameter (?)
+
+    # External input
+    I_0 = model.params.I_0.value()  # external input
+    I_external = model.params.I_external.value()  # external stimulation
+
+    # Coupling parameters
+    g = model.params.g.value()  # global coupling (from all nodes E_j to single node E_i)
+    g_EE = model.params.g_EE.value()  # local self excitatory feedback (from E_i to E_i)
+    g_IE = model.params.g_IE.value()  # local inhibitory coupling (from I_i to E_i)
+    g_EI = model.params.g_EI.value()  # local excitatory coupling (from E_i to I_i)
+
+    aE = model.params.aE.value()
+    bE = model.params.bE.value()
+    dE = model.params.dE.value()
+    aI = model.params.aI.value()
+    bI = model.params.bI.value()
+    dI = model.params.dI.value()
+
+    # Output (BOLD signal)
+    alpha = model.params.alpha.value()
+    rho = model.params.rho.value()
+    k1 = model.params.k1.value()
+    k2 = model.params.k2.value()
+    k3 = model.params.k3.value()  # adjust this number from 0.48 for BOLD fluctruate around zero
+    V = model.params.V.value()
+    E0 = model.params.E0.value()
+    tau_s = model.params.tau_s.value()
+    tau_f = model.params.tau_f.value()
+    tau_0 = model.params.tau_0.value()
+    mu = model.params.mu.value()
+
+
     next_state = {}
 
     # hx is current state (6) 0: E 1:I (neural activities) 2:x 3:f 4:v 5:f (BOLD)
@@ -319,21 +443,21 @@ def integration_forward(model, external, hx, hE):
                     I[:, sample_i] = I_mean[:, 0] + 0.001 * torch.randn(model.node_size)
 
                 # Calculate the input recurrent.
-                IE = torch.tanh(m(model.W_E * model.I_0 + (0.001 + m(model.g_EE)) * E
-                                  + model.g * torch.matmul(lap_adj, E) - (
-                                          0.001 + m(model.g_IE)) * I))  # input currents for E
-                II = torch.tanh(m(model.W_I * model.I_0 + (0.001 + m(model.g_EI)) * E - I))  # input currents for I
+                IE = torch.tanh(m(W_E * I_0 + (0.001 + m(g_EE)) * E
+                                  + g * torch.matmul(lap_adj, E) - (
+                                          0.001 + m(g_IE)) * I))  # input currents for E
+                II = torch.tanh(m(W_I * I_0 + (0.001 + m(g_EI)) * E - I))  # input currents for I
 
                 # Calculate the firing rates.
-                rE = h_tf(model.aE, model.bE, model.dE, IE)  # firing rate for E
-                rI = h_tf(model.aI, model.bI, model.dI, II)  # firing rate for I
+                rE = h_tf(aE, bE, dE, IE)  # firing rate for E
+                rI = h_tf(aI, bI, dI, II)  # firing rate for I
                 # Update the states by step-size 0.05.
-                E_next = E + dt * (-E * torch.reciprocal(model.tau_E) + model.gamma_E * (1. - E) * rE) \
+                E_next = E + dt * (-E * torch.reciprocal(tau_E) + gamma_E * (1. - E) * rE) \
                          + torch.sqrt(dt) * torch.randn(model.node_size, model.sampling_size) * (0.02 + m(
-                    model.std_in))  ### equlibrim point at E=(tau_E*gamma_E*rE)/(1+tau_E*gamma_E*rE)
-                I_next = I + dt * (-I * torch.reciprocal(model.tau_I) + model.gamma_I * rI) \
+                    std_in))  ### equlibrim point at E=(tau_E*gamma_E*rE)/(1+tau_E*gamma_E*rE)
+                I_next = I + dt * (-I * torch.reciprocal(tau_I) + gamma_I * rI) \
                          + torch.sqrt(dt) * torch.randn(model.node_size, model.sampling_size) * (
-                                 0.02 + m(model.std_in))
+                                 0.02 + m(std_in))
 
                 # Calculate the saturation for model states (for stability and gradient calculation).
 
@@ -353,14 +477,13 @@ def integration_forward(model, external, hx, hE):
 
             for step_i in range(model.steps_per_TR):
                 x_next = x + 1 * dt * (1 * E_hist[:, TR_i, step_i][:, np.newaxis] - torch.reciprocal(
-                    model.tau_s) * x - torch.reciprocal(model.tau_f) * (f - 1))
+                    tau_s) * x - torch.reciprocal(tau_f) * (f - 1))
                 f_next = f + 1 * dt * x
-                v_next = v + 1 * dt * (f - torch.pow(v, torch.reciprocal(model.alpha))) * torch.reciprocal(
-                    model.tau_0)
+                v_next = v + 1 * dt * (f - torch.pow(v, torch.reciprocal(alpha))) * torch.reciprocal(tau_0)
                 q_next = q + 1 * dt * (
-                        f * (1 - torch.pow(1 - model.rho, torch.reciprocal(f))) * torch.reciprocal(
-                    model.rho) - q * torch.pow(v, torch.reciprocal(model.alpha)) * torch.reciprocal(v)) \
-                         * torch.reciprocal(model.tau_0)
+                        f * (1 - torch.pow(1 - rho, torch.reciprocal(f))) * torch.reciprocal(
+                    rho) - q * torch.pow(v, torch.reciprocal(alpha)) * torch.reciprocal(v)) \
+                         * torch.reciprocal(tau_0)
 
                 x = torch.tanh(x_next)
                 f = (1 + torch.tanh(f_next - 1))
@@ -374,9 +497,9 @@ def integration_forward(model, external, hx, hE):
 
             # Put the BOLD signal each tr to the placeholder being used in the cost calculation.
 
-            bold_window[:, TR_i] = ((0.00 + m(model.std_out)) * torch.randn(model.node_size, 1) +
-                                    100.0 * model.V * torch.reciprocal(model.E0) *
-                                    (model.k1 * (1 - q) + model.k2 * (1 - q * torch.reciprocal(v)) + model.k3 * (
+            bold_window[:, TR_i] = ((0.00 + m(std_out)) * torch.randn(model.node_size, 1) +
+                                    100.0 * V * torch.reciprocal(E0) *
+                                    (k1 * (1 - q) + k2 * (1 - q * torch.reciprocal(v)) + k3 * (
                                             1 - v)))[:, 0]
     else:
 
@@ -393,22 +516,22 @@ def integration_forward(model, external, hx, hE):
                     I[:, sample_i] = I_mean[:, 0] + 0.001 * torch.randn(model.node_size)
 
                 # Calculate the input recurrent.
-                IE = 1 * torch.tanh(m(model.W_E * model.I_0 + (0.001 + m(model.g_EE)) * E \
-                                      + model.g * torch.matmul(lap_adj, E) - (
-                                              0.001 + m(model.g_IE)) * I))  # input currents for E
+                IE = 1 * torch.tanh(m(W_E * I_0 + (0.001 + m(g_EE)) * E \
+                                      + g * torch.matmul(lap_adj, E) - (
+                                              0.001 + m(g_IE)) * I))  # input currents for E
                 II = 1 * torch.tanh(
-                    m(model.W_I * model.I_0 + (0.001 + m(model.g_EI)) * E - I))  # input currents for I
+                    m(W_I * I_0 + (0.001 + m(g_EI)) * E - I))  # input currents for I
 
                 # Calculate the firing rates.
-                rE = h_tf(model.aE, model.bE, model.dE, IE)  # firing rate for E
-                rI = h_tf(model.aI, model.bI, model.dI, II)  # firing rate for I
+                rE = h_tf(aE, bE, dE, IE)  # firing rate for E
+                rI = h_tf(aI, bI, dI, II)  # firing rate for I
                 # Update the states by step-size 0.05.
-                E_next = E + dt * (-E * torch.reciprocal(model.tau_E) + model.gamma_E * (1. - E) * rE) \
+                E_next = E + dt * (-E * torch.reciprocal(tau_E) + gamma_E * (1. - E) * rE) \
                          + torch.sqrt(dt) * torch.randn(model.node_size, model.sampling_size) * (0.02 + m(
-                    model.std_in))  ### equlibrim point at E=(tau_E*gamma_E*rE)/(1+tau_E*gamma_E*rE)
-                I_next = I + dt * (-I * torch.reciprocal(model.tau_I) + model.gamma_I * rI) \
+                    std_in))  ### equlibrim point at E=(tau_E*gamma_E*rE)/(1+tau_E*gamma_E*rE)
+                I_next = I + dt * (-I * torch.reciprocal(tau_I) + gamma_I * rI) \
                          + torch.sqrt(dt) * torch.randn(model.node_size, model.sampling_size) * (
-                                 0.02 + m(model.std_in))
+                                 0.02 + m(std_in))
 
                 # Calculate the saturation for model states (for stability and gradient calculation).
                 E_next[E_next < 0.00001] = 0.00001
@@ -429,14 +552,13 @@ def integration_forward(model, external, hx, hE):
 
             for step_i in range(model.steps_per_TR):
                 x_next = x + 1 * dt * (1 * E_hist[:, TR_i, step_i][:, np.newaxis] - torch.reciprocal(
-                    model.tau_s) * x - torch.reciprocal(model.tau_f) * (f - 1))
+                    tau_s) * x - torch.reciprocal(tau_f) * (f - 1))
                 f_next = f + 1 * dt * x
-                v_next = v + 1 * dt * (f - torch.pow(v, torch.reciprocal(model.alpha))) * torch.reciprocal(
-                    model.tau_0)
+                v_next = v + 1 * dt * (f - torch.pow(v, torch.reciprocal(alpha))) * torch.reciprocal(tau_0)
                 q_next = q + 1 * dt * (
-                        f * (1 - torch.pow(1 - model.rho, torch.reciprocal(f))) * torch.reciprocal(
-                    model.rho) - q * torch.pow(v, torch.reciprocal(model.alpha)) * torch.reciprocal(v)) \
-                         * torch.reciprocal(model.tau_0)
+                        f * (1 - torch.pow(1 - rho, torch.reciprocal(f))) * torch.reciprocal(
+                    rho) - q * torch.pow(v, torch.reciprocal(alpha)) * torch.reciprocal(v)) \
+                         * torch.reciprocal(tau_0)
 
                 f_next[f_next < 0.001] = 0.001
                 v_next[v_next < 0.001] = 0.001
@@ -452,21 +574,21 @@ def integration_forward(model, external, hx, hE):
             q_window[:, TR_i] = q[:, 0]
             # Put the BOLD signal each tr to the placeholder being used in the cost calculation.
 
-            bold_window[:, TR_i] = ((0.00 + m(model.std_out)) * torch.randn(model.node_size, 1) +
-                                    100.0 * model.V * torch.reciprocal(
-                        model.E0) * (model.k1 * (1 - q) + model.k2 * (
-                            1 - q * torch.reciprocal(v)) + model.k3 * (1 - v)))[:, 0]
+            bold_window[:, TR_i] = ((0.00 + m(std_out)) * torch.randn(model.node_size, 1) +
+                                    100.0 * V * torch.reciprocal(
+                        E0) * (k1 * (1 - q) + k2 * (
+                            1 - q * torch.reciprocal(v)) + k3 * (1 - v)))[:, 0]
 
     # Update the current state.
     # print(E_m.shape)
     current_state = torch.cat([E_mean, I_mean, x, f, v, q], dim=1)
     next_state['current_state'] = current_state
-    next_state['bold_window'] = bold_window
-    next_state['E_window'] = E_hist.reshape((model.node_size, -1))
-    next_state['I_window'] = I_hist.reshape((model.node_size, -1))
-    next_state['x_window'] = x_window
-    next_state['f_window'] = f_window
-    next_state['v_window'] = v_window
-    next_state['q_window'] = q_window
+    next_state['bold'] = bold_window
+    next_state['E'] = E_hist.reshape((model.node_size, -1))
+    next_state['I'] = I_hist.reshape((model.node_size, -1))
+    next_state['x'] = x_window
+    next_state['f'] = f_window
+    next_state['v'] = v_window
+    next_state['q'] = q_window
 
     return next_state, hE
