@@ -131,6 +131,8 @@ class CostsFixedFC(AbstractLoss):
         super(CostsFixedFC, self).__init__()
         self.simKey = simKey
         self.device = device
+        
+        self.printCor = False # Whether to print the FC each time it is calculated
 
     def loss(self, simData, empData):
         """Function to calculate the cost function for Functional Connectivity (FC) fitting. 
@@ -189,5 +191,8 @@ class CostsFixedFC(AbstractLoss):
 
         # Bringing the corr-FC to the 0-1 range, and calculating the negative log-likelihood
         losses_corr = -torch.log(0.5000 + 0.5 * corr_FC) 
+        
+        if self.printCor:
+            print("FC Correlation: " + str(corr_FC.clone().detach().cpu().numpy()))
         
         return losses_corr      

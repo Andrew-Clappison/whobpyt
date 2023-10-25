@@ -95,6 +95,9 @@ class RWWEI2(AbstractNMM):
         
         self.params = params
         
+        self.useLaplacian = False
+        self.useDelays = False
+        
         self.use_fit_gains = False  # flag for fitting gains
         self.use_fit_lfm = False
         self.useBC = False
@@ -225,8 +228,8 @@ def forward(self, external, hx, hE, setNoise, batched):
 
     init_state = hx
     sim_len = self.sim_len
-    useDelays = False
-    useLaplacian = False
+    useDelays = self.useDelays
+    useLaplacian = self.useLaplacian
     withOptVars = False
     debug = False
 
@@ -290,8 +293,13 @@ def forward(self, external, hx, hE, setNoise, batched):
             
             # NOTE: We are acutally using the NEGATIVE Laplacian
             
-            Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
-            S_E_laplacian = torch.matmul(self.Con_Mtx + Laplacian_diagonal, S_E)
+            # Need to insure the matrix is first symmetric, also that the diagonal of the orignal matrix is zeros, 
+            # which may not be the case if connection weights are being fit.
+            # TODO: Make a note somewhere that the Con_Mtx is being modified before it is used
+            Con_Mtx_Sym = 0.5*(self.Con_Mtx + torch.transpose(self.Con_Mtx, 0,1)).fill_diagonal_(0)
+            
+            Laplacian_diagonal = -torch.diag(torch.sum(Con_Mtx_Sym, axis=1))
+            S_E_laplacian = torch.matmul(Con_Mtx_Sym + Laplacian_diagonal, S_E)
 
             Network_S_E = S_E_laplacian 
 
@@ -300,19 +308,15 @@ def forward(self, external, hx, hE, setNoise, batched):
             
             # NOTE: We are acutally using the NEGATIVE Laplacian
 
-            Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
-                       
-            speed = (1.5 + torch.nn.functional.relu(self.mu)) * (self.step_size * 0.001)
-            self.delays_idx = (self.Dist_Mtx / speed).type(torch.int64) #TODO: What is the units of the distance matrix then?
-            
-            S_E_history_new = self.delayed_S_E # TODO: Check if this needs to be cloned to work
-            S_E_delayed_Mtx = S_E_history_new.gather(0, (self.buffer_idx - self.delays_idx)%self.buffer_len) 
-            
-            S_E_delayed_Vector = torch.sum(torch.mul(self.Con_Mtx, S_E_delayed_Mtx), 1) # weights on delayed E
-            
-            Delayed_Laplacian_S_E = (S_E_delayed_Vector + torch.matmul(Laplacian_diagonal, S_E))
-            
-            Network_S_E = Delayed_Laplacian_S_E
+            #Laplacian_diagonal = -torch.diag(torch.sum(self.Con_Mtx, axis=1))    #Con_Mtx should be normalized, so this should just add a diagonal of -1's
+            #speed = (1.5 + torch.nn.functional.relu(self.mu)) * (self.step_size * 0.001)
+            #self.delays_idx = (self.Dist_Mtx / speed).type(torch.int64) #TODO: What is the units of the distance matrix then?
+            #S_E_history_new = self.delayed_S_E # TODO: Check if this needs to be cloned to work
+            #S_E_delayed_Mtx = S_E_history_new.gather(0, (self.buffer_idx - self.delays_idx)%self.buffer_len) 
+            #S_E_delayed_Vector = torch.sum(torch.mul(self.Con_Mtx, S_E_delayed_Mtx), 1) # weights on delayed E
+            #Delayed_Laplacian_S_E = (S_E_delayed_Vector + torch.matmul(Laplacian_diagonal, S_E))
+            #Network_S_E = Delayed_Laplacian_S_E
+            pass
 
         # Currents
         I_E = W_E*I_0 + w_plus*J_NMDA*S_E + G*J_NMDA*Network_S_E - torch.matmul(J,ones_row)*S_I + I_external # J * S_I updated to allow for local J fitting in parallel for FNGFPG
