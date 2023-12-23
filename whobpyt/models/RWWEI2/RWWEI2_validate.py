@@ -30,6 +30,8 @@ class RWWEI2_np():
         self.Con_Mtx = Con_Mtx
         self.Dist_Mtx = Dist_Mtx
         
+        self.useLaplacian = False
+        
         self.step_size = step_size
         
         
@@ -74,6 +76,12 @@ class RWWEI2_np():
         gammaI = self.params.gammaI.npValue()
         J_new = self.params.J_new.npValue()
         
+        Network_Con = self.Con_Mtx
+        if self.useLaplacian:
+            #These calculation should result in the original Con_Mtx if is already in the form of a negative Laplacian SC
+            Con_Mtx_Sym = np.fill_diagonal(0.5*self.Con_Mtx + 0.5*np.transpose(self.Con_Mtx), 0)
+            Laplacian_diagonal = -np.diag(np.sum(Con_Mtx_Sym, axis = 1))
+            Network_Con = Con_Mtx_Sym + Laplacian_diagonal
         
         def H_for_E_Vnp(I_E):
             
@@ -110,7 +118,7 @@ class RWWEI2_np():
         num_steps = int(sim_len/step_size)
         for i in range(num_steps):
         
-            Network_S_E =  numpy.matmul(self.Con_Mtx, S_E)
+            Network_S_E =  numpy.matmul(Network_Con, S_E)
         
             # Currents
             I_E = W_E*I_0 + w_plus*J_NMDA*S_E + G*J_NMDA*Network_S_E - J*S_I + I_external
